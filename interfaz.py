@@ -9,31 +9,31 @@ from propiedadesGeometricas import procesar_imagen_completa
 
 
 # ==============================================================================
-# 1. VENTANA DE SELECCIÓN DE IMAGEN Y MODO DE OPERACIÓN
+# 1. DIÁLOGO DE SELECCIÓN CON LOS 3 MODOS ACADÉMICOS DE PDI
 # ==============================================================================
 def solicitar_modo_y_archivo():
-    """Permite elegir el archivo de imagen y la opción de segmentación deseada."""
+    """Ventana inicial de selección fundamentada en teoría de PDI clásico."""
     config = {"ruta": None, "modo": "otsu"}
 
     ventana = tk.Tk()
     ventana.title("PDI - Determinación de Propiedades Geométricas")
-    ventana.geometry("480x280")
+    ventana.geometry("540x330")
     ventana.configure(bg="#1e1e1e")
     ventana.attributes('-topmost', True)
 
     tk.Label(
         ventana, text="Procesamiento Digital de Imágenes",
         font=("Arial", 11, "bold"), fg="#ffffff", bg="#1e1e1e"
-    ).pack(pady=(15, 3))
+    ).pack(pady=(12, 2))
 
     tk.Label(
         ventana, text="Selecciona la técnica de segmentación a aplicar:",
         font=("Arial", 9), fg="#9cdcfe", bg="#1e1e1e"
-    ).pack(pady=(0, 10))
+    ).pack(pady=(0, 8))
 
     frame_opciones = tk.LabelFrame(
-        ventana, text=" Modo de Operación ", font=("Arial", 9, "bold"),
-        fg="#4ec9b0", bg="#1e1e1e", padx=12, pady=10
+        ventana, text=" Modo de Operación (PDI Clásico) ", font=("Arial", 9, "bold"),
+        fg="#4ec9b0", bg="#1e1e1e", padx=12, pady=8
     )
     frame_opciones.pack(fill="x", padx=20, pady=4)
 
@@ -41,17 +41,27 @@ def solicitar_modo_y_archivo():
 
     tk.Radiobutton(
         frame_opciones,
-        text="1. Automático con Otsu (Monedas, dados o figuras sobre fondo)",
-        variable=var_modo, value="otsu", bg="#1e1e1e", fg="#ffffff",
-        selectcolor="#111111", activebackground="#1e1e1e", activeforeground="#4ec9b0"
-    ).pack(anchor="w", pady=2)
+        text="Modo 1: Umbralización Global Adaptativa (Otsu + Polaridad)\n          Para monedas, dados, figuras o piezas sobre fondo homogéneo.",
+        variable=var_modo, value="otsu", justify="left",
+        bg="#1e1e1e", fg="#ffffff", selectcolor="#111111",
+        activebackground="#1e1e1e", activeforeground="#4ec9b0"
+    ).pack(anchor="w", pady=3)
 
     tk.Radiobutton(
         frame_opciones,
-        text="2. Señalar Objetos con Clic (Escenas complejas, autos, casas)",
-        variable=var_modo, value="clic", bg="#1e1e1e", fg="#ffffff",
-        selectcolor="#111111", activebackground="#1e1e1e", activeforeground="#4ec9b0"
-    ).pack(anchor="w", pady=2)
+        text="Modo 2: Muestreo Espectral Interactivo (Semillas por Clic)\n          Para objetos arbitrarios en escenas complejas (autos, personas).",
+        variable=var_modo, value="clic", justify="left",
+        bg="#1e1e1e", fg="#ffffff", selectcolor="#111111",
+        activebackground="#1e1e1e", activeforeground="#4ec9b0"
+    ).pack(anchor="w", pady=3)
+
+    tk.Radiobutton(
+        frame_opciones,
+        text="Modo 3: Segmentación Diferencial Multicanal (Dominancia en Double)\n          Para escenas policromáticas con objetos en contacto físico (Informe LaTeX).",
+        variable=var_modo, value="multicanal", justify="left",
+        bg="#1e1e1e", fg="#ffffff", selectcolor="#111111",
+        activebackground="#1e1e1e", activeforeground="#4ec9b0"
+    ).pack(anchor="w", pady=3)
 
     def confirmar():
         ruta = filedialog.askopenfilename(
@@ -67,20 +77,20 @@ def solicitar_modo_y_archivo():
             ventana.destroy()
 
     tk.Button(
-        ventana, text="Cargar Imagen y Continuar", command=confirmar,
+        ventana, text="Cargar Imagen y Procesar", command=confirmar,
         bg="#0e639c", fg="#ffffff", font=("Arial", 10, "bold"),
         padx=15, pady=6, relief="flat", cursor="hand2"
-    ).pack(pady=15)
+    ).pack(pady=12)
 
     ventana.mainloop()
     return config["ruta"], config["modo"]
 
 
 # ==============================================================================
-# 2. CAPTURA INTERACTIVA DE CLICS (SOLO PARA MODO 2)
+# 2. CAPTURA INTERACTIVA DE CLICS (MODO 2)
 # ==============================================================================
 def capturar_clics_usuario(ruta_imagen):
-    """Abre la imagen para que el usuario señale los objetos que desea delimitar."""
+    """Permite al usuario marcar con el ratón los objetos de interés."""
     img_bgr = cv2.imread(ruta_imagen)
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     alto, ancho, _ = img_rgb.shape
@@ -93,11 +103,11 @@ def capturar_clics_usuario(ruta_imagen):
     puntos_reales = []
 
     fig, ax = plt.subplots(figsize=(9, 6), facecolor='#1e1e1e')
-    fig.canvas.manager.set_window_title("Haz clic sobre cada objeto que deseas delimitar")
+    fig.canvas.manager.set_window_title("PDI - Selecciona los objetos con un clic")
     ax.imshow(img_preview)
     ax.set_facecolor('#1e1e1e')
     ax.set_title(
-        "Haz CLIC sobre cada objeto a medir (ej. auto azul, auto rojo).\nAl terminar, presiona ENTER o cierra esta ventana.",
+        "Haz CLIC sobre cada objeto que deseas delimitar.\nAl terminar, presiona ENTER o cierra la ventana.",
         color='#ffffff', fontsize=10, pad=10
     )
     ax.axis('off')
@@ -125,7 +135,7 @@ def capturar_clics_usuario(ruta_imagen):
 
 
 # ==============================================================================
-# 3. REPORTE EN TERMINAL (TABLA DE REGIONPROPS ESTILO MATLAB)
+# 3. REPORTE EN TERMINAL (TABLA REGIONPROPS ESTILO MATLAB)
 # ==============================================================================
 def imprimir_reporte_matlab(datos):
     """Muestra en la terminal la tabla de medidas y los códigos de Freeman."""
@@ -148,7 +158,7 @@ def imprimir_reporte_matlab(datos):
 
 
 # ==============================================================================
-# 4. VISUALIZACIÓN EN MATPLOTLIB (6 PANELES CON TEMA OSCURO)
+# 4. VISUALIZACIÓN MULTIPANEL CON TEMA OSCURO
 # ==============================================================================
 def mostrar_interfaz_grafica(datos):
     """Despliega los 6 paneles en orden cronológico con líneas rectas continuas."""
@@ -160,7 +170,7 @@ def mostrar_interfaz_grafica(datos):
 
     plt.rcParams['toolbar'] = 'toolbar2'
     fig = plt.figure(figsize=(16, 8.5), facecolor='#161616')
-    fig.canvas.manager.set_window_title(f'PDI - Determinación de Propiedades Geométricas ({len(objetos)} objeto(s))')
+    fig.canvas.manager.set_window_title(f'PDI - Análisis Geométrico ({len(objetos)} objeto(s) detectado(s))')
     gs = fig.add_gridspec(2, 3, wspace=0.18, hspace=0.25)
 
     def estilizar_panel(ax, titulo):
@@ -216,7 +226,7 @@ def mostrar_interfaz_grafica(datos):
         caja = obj.BoundingBox
         cuadro = obj.CuadradoEnvolvente
 
-        # BoundingBox rectangular
+        # BoundingBox Rectangular
         rect = patches.Rectangle(
             (caja[0], caja[1]), caja[2], caja[3],
             linewidth=1.8, edgecolor=color_caja, facecolor='none',
@@ -224,7 +234,7 @@ def mostrar_interfaz_grafica(datos):
         )
         ax6.add_patch(rect)
 
-        # Cuadrado envolvente simétrico (lado = max) en amarillo
+        # Cuadrado Envolvente simétrico (lado = max) en amarillo
         cuad = patches.Rectangle(
             (cuadro[0], cuadro[1]), cuadro[2], cuadro[3],
             linewidth=1.8, edgecolor='#ffd700', facecolor='none',
@@ -270,7 +280,6 @@ def main():
     semillas = None
     if modo == "clic":
         semillas = capturar_clics_usuario(ruta)
-        # Si el usuario no hizo clics y cerró la ventana, se cambia a modo otsu automáticamente
         if not semillas or len(semillas) == 0:
             modo = "otsu"
 

@@ -3,18 +3,17 @@ import numpy as np
 
 
 # ==============================================================================
-# 1. MITIGACIÓN DE RUIDO Y RELLENO DE HUECOS ('imfill' DE MATLAB)
+# 1. FILTRADO GAUSSIANO Y RELLENO MORFOLÓGICO ('imfill' DE MATLAB)
 # ==============================================================================
 def aplicar_suavizado_gaussiano(imagen, ksize=5, sigma=1.0):
-    """Mitiga el ruido de alta frecuencia previo a la binarización."""
+    """Mitiga el ruido de alta frecuencia previo a la binarización (Audio 2)."""
     return cv2.GaussianBlur(imagen, (ksize, ksize), sigma)
 
 
 def imfill_holes(mascara_binaria):
     """
     Emula textualmente 'imfill(BW, "holes")' de MATLAB mediante floodFill.
-    Inunda el fondo exterior desde (0,0) y sella cavidades internas
-    usando operadores lógicos nativos (| y ~).
+    Inunda el exterior desde (0,0) y sella cavidades internas usando operadores lógicos.
     """
     if mascara_binaria.dtype == bool:
         mask_u8 = mascara_binaria.astype(np.uint8) * 255
@@ -31,48 +30,47 @@ def imfill_holes(mascara_binaria):
 
 
 # ==============================================================================
-# 2. MÉTODOS DE SEGMENTACIÓN (PDI CLÁSICO SIN MACHINE LEARNING)
+# 2. LOS TRES MOTORES DE SEGMENTACIÓN (PDI CLÁSICO SIN MACHINE LEARNING)
 # ==============================================================================
 def segmentar_otsu_automatico(img_rgb):
     """
-    OPCIÓN 1: Segmentación automática por Otsu adaptativo.
-    Ideal para monedas, dados, figuras geométricas u objetos sobre fondo contrastado.
+    MODO 1: Umbralización Global Adaptativa de Otsu con Detección de Polaridad.
+    Universal para monedas, dados, piezas industriales o figuras sobre fondo homogéneo.
     """
     alto, ancho, _ = img_rgb.shape
     gris = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
     gris_suavizada = aplicar_suavizado_gaussiano(gris, ksize=5, sigma=1.0)
 
-    # Umbralización óptima global de Otsu
     _, thresh = cv2.threshold(gris_suavizada, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Detección automática de polaridad: evalúa el marco perimetral exterior
+    # Inversión automática según el color del fondo perimetral
     bordes = np.concatenate([thresh[0, :], thresh[-1, :], thresh[:, 0], thresh[:, -1]])
     bw_base = (thresh == 0) if np.mean(bordes) > 127 else (thresh > 0)
 
-    # Relleno de huecos internos y apertura morfológica suave
     bw_solida = imfill_holes(bw_base)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     bw_limpia = cv2.morphologyEx(bw_solida.astype(np.uint8), cv2.MORPH_OPEN, kernel) > 0
 
-    # Filtrar componentes conexas menores al umbral de ruido (0.15% del área total)
     area_minima = max(50.0, (alto * ancho) * 0.0015)
     num_l, labels, stats, _ = cv2.connectedComponentsWithStats(bw_limpia.astype(np.uint8))
 
-    mascaras = []
+    componentes = []
     for idx in range(1, num_l):
         if stats[idx, cv2.CC_STAT_AREA] >= area_minima:
-            mascaras.append((f"Objeto {len(mascaras) + 1}", labels == idx))
+            componentes.append(labels == idx)
 
-    # Ordenar de izquierda a derecha
-    mascaras.sort(key=lambda item: np.argwhere(item[1])[:, 1].min() if np.any(item[1]) else 0)
+    # Ordenar de izquierda a derecha según la coordenada X mínima
+    componentes.sort(key=lambda m: np.argwhere(m)[:, 1].min() if np.any(m) else 0)
+
+    # Asignar nombres ordenados de izquierda a derecha
+    mascaras = [(f"Objeto {i}", m) for i, m in enumerate(componentes, start=1)]
     return mascaras
 
 
 def segmentar_por_clics(img_rgb, puntos_semilla, tolerancia=45.0):
     """
-    OPCIÓN 2: Segmentación asistida por clic del usuario (PDI clásico).
-    Aísla objetos específicos en escenas complejas evaluando la distancia
-    euclidiana cromática del píxel seleccionado en espacio continuo RGB.
+    MODO 2: Muestreo Espectral Interactivo mediante Semillas de Color (PDI clásico).
+    Permite aislar cualquier objeto arbitrario en escenas complejas mediante distancia euclidiana RGB.
     """
     alto, ancho, _ = img_rgb.shape
     img_suavizada = aplicar_suavizado_gaussiano(img_rgb, ksize=5, sigma=1.0)
@@ -88,11 +86,10 @@ def segmentar_por_clics(img_rgb, puntos_semilla, tolerancia=45.0):
         x1, x2 = max(0, x_c - 2), min(ancho, x_c + 3)
         color_ref = I_float[y1:y2, x1:x2].mean(axis=(0, 1))
 
-        # Distancia euclidiana en el espacio RGB
         distancia = np.sqrt(np.sum((I_float - color_ref) ** 2, axis=2))
         mask_cruda = distancia <= tolerancia
 
-        # Cierre morfológico, imfill y apertura
+        # Morfología matemática e imfill
         kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
         mask_cerrada = cv2.morphologyEx(mask_cruda.astype(np.uint8), cv2.MORPH_CLOSE, kernel_close) > 0
         mask_solida = imfill_holes(mask_cerrada)
@@ -100,7 +97,6 @@ def segmentar_por_clics(img_rgb, puntos_semilla, tolerancia=45.0):
         kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         mask_limpia = cv2.morphologyEx(mask_solida.astype(np.uint8), cv2.MORPH_OPEN, kernel_open) > 0
 
-        # Conservar la componente conexa más cercana a donde el usuario hizo clic
         num_l, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_limpia.astype(np.uint8))
         if num_l > 1:
             distancias = [np.hypot(centroids[i][0] - x_c, centroids[i][1] - y_c) for i in range(1, num_l)]
@@ -114,8 +110,60 @@ def segmentar_por_clics(img_rgb, puntos_semilla, tolerancia=45.0):
     return mascaras
 
 
+def segmentar_diferencial_multicanal(I_double):
+    """
+    MODO 3: Segmentación Diferencial Multicanal en Espacio Continuo Double (Caso de Estudio).
+    Implementa el desacople por dominancia espectral relativa R - max(G,B) documentado en el informe LaTeX.
+    """
+    R = I_double[:, :, 0]
+    G = I_double[:, :, 1]
+    B = I_double[:, :, 2]
+
+    # Objeto Auto: Carrocería con absorción en B y reflectancia en R-G
+    carroceria = (R > 0.55) & (G > 0.45) & (B < 0.45)
+    ruedas_oscuras = (R < 0.30) & (G < 0.30) & (B < 0.30)
+
+    # Dilatación condicional calibrada (25x25) para capturar la base de las ruedas contiguas al chasis
+    kernel_dilatacion = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+    zona_objeto = cv2.dilate(carroceria.astype(np.uint8), kernel_dilatacion) > 0
+    base_oscura = ruedas_oscuras & zona_objeto
+    bw_a_cruda = carroceria | base_oscura
+
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    bw_a_cerrada = cv2.morphologyEx(bw_a_cruda.astype(np.uint8), cv2.MORPH_CLOSE, kernel_close) > 0
+    bw_a_solida = imfill_holes(bw_a_cerrada)
+
+    # Apertura morfológica (5x5) para cortar la línea parásita de 1 px hacia el marco de la puerta
+    kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    bw_a_limpia = cv2.morphologyEx(bw_a_solida.astype(np.uint8), cv2.MORPH_OPEN, kernel_open) > 0
+
+    num_l_a, labels_a, stats_a, _ = cv2.connectedComponentsWithStats(bw_a_limpia.astype(np.uint8))
+    if num_l_a > 1:
+        idx_a = 1 + np.argmax(stats_a[1:, cv2.CC_STAT_AREA])
+        bwAuto = (labels_a == idx_a)
+    else:
+        bwAuto = bw_a_limpia
+
+    # Objeto Casa: Dominancia relativa del rojo R - max(G,B) > 0.15 y exclusión del auto
+    dominancia_roja = (R - np.maximum(G, B) > 0.15) & (R > 0.45)
+    casa_pura = dominancia_roja & (~bwAuto)
+
+    kernel_casa = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+    bw_c_cerrada = cv2.morphologyEx(casa_pura.astype(np.uint8), cv2.MORPH_CLOSE, kernel_casa) > 0
+    bw_c_solida = imfill_holes(bw_c_cerrada)
+
+    num_l_c, labels_c, stats_c, _ = cv2.connectedComponentsWithStats(bw_c_solida.astype(np.uint8))
+    if num_l_c > 1:
+        idx_c = 1 + np.argmax(stats_c[1:, cv2.CC_STAT_AREA])
+        bwCasa = (labels_c == idx_c)
+    else:
+        bwCasa = bw_c_solida
+
+    return [("Casa", bwCasa), ("Auto", bwAuto)]
+
+
 # ==============================================================================
-# 3. MOTOR DE PROPIEDADES GEOMÉTRICAS ('regionprops' DE MATLAB)
+# 3. MOTOR DE PROPIEDADES GEOMÉTRICAS Y ALIAS 'regionprops'
 # ==============================================================================
 class RegionPropsStruct:
     """Estructura idéntica al struct devuelto por regionprops en MATLAB."""
@@ -133,7 +181,7 @@ class RegionPropsStruct:
 
 
 def extraer_propiedades(mascara_binaria, alto_img, ancho_img, nombre="Objeto"):
-    """Calcula analíticamente las medidas geométricas de la región."""
+    """Calcula analíticamente las medidas geométricas de la región conexa."""
     bw_u8 = mascara_binaria.astype(np.uint8) * 255 if mascara_binaria.dtype == bool else (mascara_binaria > 0).astype(np.uint8) * 255
     contornos, _ = cv2.findContours(bw_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
@@ -151,7 +199,7 @@ def extraer_propiedades(mascara_binaria, alto_img, ancho_img, nombre="Objeto"):
     x, y, w, h = cv2.boundingRect(cnt)
     props.BoundingBox = [float(x), float(y), float(w), float(h)]
 
-    # Centroide analítico continuo obtenido de momentos espaciales
+    # Centroide analítico continuo por momentos espaciales discretos (m10/m00, m01/m00)
     M = cv2.moments(cnt)
     if M["m00"] != 0:
         cx = M["m10"] / M["m00"]
@@ -160,7 +208,7 @@ def extraer_propiedades(mascara_binaria, alto_img, ancho_img, nombre="Objeto"):
         cx, cy = x + w / 2.0, y + h / 2.0
     props.Centroid = (float(cx), float(cy))
 
-    # Subimagen binaria recortada ('Image' en MATLAB)
+    # Subimagen recortada ('Image' en MATLAB)
     props.Image = (mascara_binaria[y:y+h, x:x+w] > 0)
 
     # Cuadrado simétrico centrado: lado = max(ancho, alto)
@@ -168,9 +216,13 @@ def extraer_propiedades(mascara_binaria, alto_img, ancho_img, nombre="Objeto"):
         props.BoundingBox, ancho_img, alto_img
     )
 
-    # Código de cadena de Freeman en 8-vecindad
+    # Código de Freeman en 8-vecindad
     props.CodigoFreeman = freeman_chain_code_8(cnt)
     return props
+
+
+# Alias formal para garantizar paridad exacta con la sintaxis de MATLAB exigida en clase:
+regionprops = extraer_propiedades
 
 
 # ==============================================================================
@@ -218,11 +270,7 @@ def calcular_cuadrado_envolvente(caja, ancho_img, alto_img):
 # 6. PIPELINE PRINCIPAL DE PROCESAMIENTO
 # ==============================================================================
 def procesar_imagen_completa(ruta_archivo, modo="otsu", puntos_semilla=None, tolerancia=45.0):
-    """
-    Ejecuta el pipeline de procesamiento según la opción seleccionada:
-    - modo='otsu': Binarización automática global para monedas o figuras sobre fondo.
-    - modo='clic': Binarización espectral interactiva para los objetos señalados por el usuario.
-    """
+    """Ejecuta el pipeline de procesamiento según el modo de PDI clásico seleccionado."""
     img_bgr = cv2.imread(ruta_archivo)
     if img_bgr is None:
         raise ValueError("No se pudo cargar el archivo como una imagen válida.")
@@ -230,7 +278,6 @@ def procesar_imagen_completa(ruta_archivo, modo="otsu", puntos_semilla=None, tol
     alto, ancho, _ = img_bgr.shape
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
-    # Conversión formal a double en espacio continuo
     img_suavizada = aplicar_suavizado_gaussiano(img_rgb, ksize=5, sigma=1.0)
     I_double = img_suavizada.astype(np.float64) / 255.0
 
@@ -242,24 +289,22 @@ def procesar_imagen_completa(ruta_archivo, modo="otsu", puntos_semilla=None, tol
     G_uint8 = img_rgb[:, :, 1]
     B_uint8 = img_rgb[:, :, 2]
 
-    # Ejecución de la segmentación según la opción elegida
     if modo == "clic" and puntos_semilla and len(puntos_semilla) > 0:
         mascaras = segmentar_por_clics(img_rgb, puntos_semilla, tolerancia=tolerancia)
+    elif modo == "multicanal":
+        mascaras = segmentar_diferencial_multicanal(I_double)
     else:
         mascaras = segmentar_otsu_automatico(img_rgb)
 
-    # Máscara combinada para el panel de imagen binarizada
     bwTotal = np.zeros((alto, ancho), dtype=bool)
     for _, m in mascaras:
         bwTotal = bwTotal | m
 
-    # Extracción de propiedades geométricas estilo regionprops
     objetos = []
     for nombre, m in mascaras:
-        prop = extraer_propiedades(m, alto, ancho, nombre=nombre)
+        prop = regionprops(m, alto, ancho, nombre=nombre)
         objetos.append(prop)
 
-    # Contornos perimetrales sobre lienzo negro
     img_contornos = np.zeros((alto, ancho), dtype=np.uint8)
     for obj in objetos:
         if obj.Contorno is not None:
