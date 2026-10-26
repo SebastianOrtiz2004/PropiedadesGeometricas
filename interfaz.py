@@ -3,71 +3,164 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
-# Importamos el motor matemático desde el módulo de lógica pura
 from propiedadesGeometricas import procesar_imagen_completa
 
 
 # ==============================================================================
-# 1. EXPLORADOR NATIVO DE ARCHIVOS
+# 1. VENTANA DE SELECCIÓN DE IMAGEN Y MODO DE OPERACIÓN
 # ==============================================================================
-def seleccionar_archivo_imagen():
-    """Abre el explorador de archivos del sistema operativo."""
-    raiz = tk.Tk()
-    raiz.withdraw()
-    raiz.attributes('-topmost', True)
-    ruta = filedialog.askopenfilename(
-        title="Selecciona la imagen para procesar",
-        filetypes=[
-            ("Imágenes compatibles", "*.jpg *.jpeg *.png *.bmp *.webp *.tif"),
-            ("Todos los archivos", "*.*")
-        ]
+def solicitar_modo_y_archivo():
+    """Permite elegir el archivo de imagen y la opción de segmentación deseada."""
+    config = {"ruta": None, "modo": "otsu"}
+
+    ventana = tk.Tk()
+    ventana.title("PDI - Determinación de Propiedades Geométricas")
+    ventana.geometry("480x280")
+    ventana.configure(bg="#1e1e1e")
+    ventana.attributes('-topmost', True)
+
+    tk.Label(
+        ventana, text="Procesamiento Digital de Imágenes",
+        font=("Arial", 11, "bold"), fg="#ffffff", bg="#1e1e1e"
+    ).pack(pady=(15, 3))
+
+    tk.Label(
+        ventana, text="Selecciona la técnica de segmentación a aplicar:",
+        font=("Arial", 9), fg="#9cdcfe", bg="#1e1e1e"
+    ).pack(pady=(0, 10))
+
+    frame_opciones = tk.LabelFrame(
+        ventana, text=" Modo de Operación ", font=("Arial", 9, "bold"),
+        fg="#4ec9b0", bg="#1e1e1e", padx=12, pady=10
     )
-    raiz.destroy()
-    return ruta
+    frame_opciones.pack(fill="x", padx=20, pady=4)
+
+    var_modo = tk.StringVar(value="otsu")
+
+    tk.Radiobutton(
+        frame_opciones,
+        text="1. Automático con Otsu (Monedas, dados o figuras sobre fondo)",
+        variable=var_modo, value="otsu", bg="#1e1e1e", fg="#ffffff",
+        selectcolor="#111111", activebackground="#1e1e1e", activeforeground="#4ec9b0"
+    ).pack(anchor="w", pady=2)
+
+    tk.Radiobutton(
+        frame_opciones,
+        text="2. Señalar Objetos con Clic (Escenas complejas, autos, casas)",
+        variable=var_modo, value="clic", bg="#1e1e1e", fg="#ffffff",
+        selectcolor="#111111", activebackground="#1e1e1e", activeforeground="#4ec9b0"
+    ).pack(anchor="w", pady=2)
+
+    def confirmar():
+        ruta = filedialog.askopenfilename(
+            title="Seleccionar imagen para análisis",
+            filetypes=[
+                ("Imágenes compatibles", "*.jpg *.jpeg *.png *.bmp *.webp *.tif"),
+                ("Todos los archivos", "*.*")
+            ]
+        )
+        if ruta:
+            config["ruta"] = ruta
+            config["modo"] = var_modo.get()
+            ventana.destroy()
+
+    tk.Button(
+        ventana, text="Cargar Imagen y Continuar", command=confirmar,
+        bg="#0e639c", fg="#ffffff", font=("Arial", 10, "bold"),
+        padx=15, pady=6, relief="flat", cursor="hand2"
+    ).pack(pady=15)
+
+    ventana.mainloop()
+    return config["ruta"], config["modo"]
 
 
 # ==============================================================================
-# 2. REPORTE EN CONSOLA (FORMATO DE TABLA DE MATLAB)
+# 2. CAPTURA INTERACTIVA DE CLICS (SOLO PARA MODO 2)
+# ==============================================================================
+def capturar_clics_usuario(ruta_imagen):
+    """Abre la imagen para que el usuario señale los objetos que desea delimitar."""
+    img_bgr = cv2.imread(ruta_imagen)
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    alto, ancho, _ = img_rgb.shape
+
+    escala = min(1.0, 900.0 / max(alto, ancho))
+    ancho_v = int(ancho * escala)
+    alto_v = int(alto * escala)
+    img_preview = cv2.resize(img_rgb, (ancho_v, alto_v))
+
+    puntos_reales = []
+
+    fig, ax = plt.subplots(figsize=(9, 6), facecolor='#1e1e1e')
+    fig.canvas.manager.set_window_title("Haz clic sobre cada objeto que deseas delimitar")
+    ax.imshow(img_preview)
+    ax.set_facecolor('#1e1e1e')
+    ax.set_title(
+        "Haz CLIC sobre cada objeto a medir (ej. auto azul, auto rojo).\nAl terminar, presiona ENTER o cierra esta ventana.",
+        color='#ffffff', fontsize=10, pad=10
+    )
+    ax.axis('off')
+
+    def al_hacer_clic(event):
+        if event.xdata is not None and event.ydata is not None:
+            x_orig = event.xdata / escala
+            y_orig = event.ydata / escala
+            puntos_reales.append((x_orig, y_orig))
+            idx = len(puntos_reales)
+            ax.plot(event.xdata, event.ydata, 'o', color='#00ff66', markeredgecolor='black', markersize=8)
+            ax.text(event.xdata + 5, event.ydata - 5, f"Obj {idx}", color='#00ff66', fontsize=9, weight='bold')
+            fig.canvas.draw()
+
+    def al_presionar_tecla(event):
+        if event.key in ['enter', 'escape']:
+            plt.close(fig)
+
+    fig.canvas.mpl_connect('button_press_event', al_hacer_clic)
+    fig.canvas.mpl_connect('key_press_event', al_presionar_tecla)
+    plt.tight_layout()
+    plt.show()
+
+    return puntos_reales
+
+
+# ==============================================================================
+# 3. REPORTE EN TERMINAL (TABLA DE REGIONPROPS ESTILO MATLAB)
 # ==============================================================================
 def imprimir_reporte_matlab(datos):
-    """Muestra en la terminal la tabla de medidas y los códigos de cadena."""
-    propCasa = datos["propCasa"]
-    propAuto = datos["propAuto"]
+    """Muestra en la terminal la tabla de medidas y los códigos de Freeman."""
+    objetos = datos["objetos"]
 
-    print("\n" + "=" * 80)
-    print("        MEDIDAS DE LAS REGIONES DELIMITADAS (regionprops / Hipermatriz)")
-    print("=" * 80)
-    print(f"{'Objeto':<10} {'Area_px2':<15} {'Perimetro_px':<15} {'Centroide_X':<18} {'Centroide_Y':<18}")
-    print("-" * 80)
-    print(f"{'Casa':<10} {propCasa.Area:<15.1f} {propCasa.Perimeter:<15.2f} {propCasa.Centroid[0]:<18.2f} {propCasa.Centroid[1]:<18.2f}")
-    print(f"{'Auto':<10} {propAuto.Area:<15.1f} {propAuto.Perimeter:<15.2f} {propAuto.Centroid[0]:<18.2f} {propAuto.Centroid[1]:<18.2f}")
-    print("=" * 80 + "\n")
+    print("\n" + "=" * 84)
+    print(f"   MEDIDAS DE LAS REGIONES DELIMITADAS (regionprops) | Modo: {datos['modo_usado'].upper()}")
+    print("=" * 84)
+    print(f"{'Objeto':<12} {'Area [px²]':<15} {'Perímetro [px]':<16} {'Centroide (X, Y)':<22} {'Lado Cuadrado'}")
+    print("-" * 84)
+    for p in objetos:
+        cx, cy = p.Centroid
+        print(f"{p.Nombre:<12} {p.Area:<15.1f} {p.Perimeter:<16.2f} ({cx:.1f}, {cy:.1f}){'':<7} {p.LadoCuadrado:.1f} px")
+    print("=" * 84 + "\n")
 
-    cadena_casa = datos["cadena_casa"]
-    cadena_auto = datos["cadena_auto"]
-    print(f"Código de Cadena Casa (primeros 30 dígitos): {cadena_casa[:30]} ... Total: {len(cadena_casa)} eslabones")
-    print(f"Código de Cadena Auto (primeros 30 dígitos): {cadena_auto[:30]} ... Total: {len(cadena_auto)} eslabones\n")
+    for p in objetos:
+        cadena = p.CodigoFreeman
+        print(f"Código Freeman {p.Nombre} (primeros 30 dígitos): {cadena[:30]} ... Total: {len(cadena)} eslabones")
+    print()
 
 
 # ==============================================================================
-# 3. INTERFAZ GRÁFICA MULTIPANEL CON TEMA OSCURO
+# 4. VISUALIZACIÓN EN MATPLOTLIB (6 PANELES CON TEMA OSCURO)
 # ==============================================================================
 def mostrar_interfaz_grafica(datos):
-    """Construye y despliega la cuadrícula 2x3 con tema oscuro y líneas continuas."""
+    """Despliega los 6 paneles en orden cronológico con líneas rectas continuas."""
     img_rgb = datos["img_rgb"]
     alto, ancho = datos["alto"], datos["ancho"]
     bwTotal = datos["bwTotal"]
     img_contornos = datos["img_contornos"]
-    propCasa = datos["propCasa"]
-    propAuto = datos["propAuto"]
-    cuadradoAuto = datos["cuadradoAuto"]
-    lado = datos["lado"]
+    objetos = datos["objetos"]
 
     plt.rcParams['toolbar'] = 'toolbar2'
     fig = plt.figure(figsize=(16, 8.5), facecolor='#161616')
-    fig.canvas.manager.set_window_title('PDI - Determinación de Propiedades Geométricas')
+    fig.canvas.manager.set_window_title(f'PDI - Determinación de Propiedades Geométricas ({len(objetos)} objeto(s))')
     gs = fig.add_gridspec(2, 3, wspace=0.18, hspace=0.25)
 
     def estilizar_panel(ax, titulo):
@@ -80,7 +173,7 @@ def mostrar_interfaz_grafica(datos):
     ax1.imshow(img_rgb)
     estilizar_panel(ax1, "1. Imagen Original (RGB)")
 
-    # Panel 2: Imagen Binarizada Global (Blanco y Negro puro / imfill)
+    # Panel 2: Imagen Binarizada Global Sólida (imfill)
     ax2 = fig.add_subplot(gs[0, 1])
     ax2.imshow(bwTotal, cmap='gray')
     estilizar_panel(ax2, "2. Imagen Binarizada Sólida (0 y 1 / imfill)")
@@ -88,103 +181,105 @@ def mostrar_interfaz_grafica(datos):
     # Panel 3: Contornos Digitales de 8-Vecindad
     ax3 = fig.add_subplot(gs[0, 2])
     ax3.imshow(img_contornos, cmap='gray')
-    estilizar_panel(ax3, "3. Contornos 8-Vecinos (Código de Cadena)")
+    estilizar_panel(ax3, f"3. Contornos 8-Vecinos ({len(objetos)} detectados)")
 
-    # Panel 4: Subimagen Binaria de la Casa (propCasa.Image)
+    # Panel 4: Subimagen Binaria del Objeto 1
     ax4 = fig.add_subplot(gs[1, 0])
-    ax4.imshow(propCasa.Image, cmap='gray')
-    estilizar_panel(ax4, f"4. Subimagen 'Image' Casa (Binaria)\n({propCasa.Image.shape[0]}x{propCasa.Image.shape[1]} px)")
+    if len(objetos) >= 1:
+        obj1 = objetos[0]
+        ax4.imshow(obj1.Image, cmap='gray')
+        estilizar_panel(ax4, f"4. Subimagen 'Image' {obj1.Nombre}\n({obj1.Image.shape[0]}x{obj1.Image.shape[1]} px)")
+    else:
+        estilizar_panel(ax4, "4. Subimagen (Sin objetos)")
 
-    # Panel 5: Subimagen Binaria del Auto (propAuto.Image / Figure 3 del docente)
+    # Panel 5: Subimagen Binaria del Objeto 2
     ax5 = fig.add_subplot(gs[1, 1])
-    ax5.imshow(propAuto.Image, cmap='gray')
-    estilizar_panel(ax5, f"5. Subimagen 'Image' Auto (Binaria)\n({propAuto.Image.shape[0]}x{propAuto.Image.shape[1]} px)")
+    if len(objetos) >= 2:
+        obj2 = objetos[1]
+        ax5.imshow(obj2.Image, cmap='gray')
+        estilizar_panel(ax5, f"5. Subimagen 'Image' {obj2.Nombre}\n({obj2.Image.shape[0]}x{obj2.Image.shape[1]} px)")
+    elif len(objetos) == 1:
+        ax5.imshow(objetos[0].Image, cmap='gray')
+        estilizar_panel(ax5, f"5. Subimagen {objetos[0].Nombre}")
+    else:
+        estilizar_panel(ax5, "5. Subimagen (Sin objetos)")
 
     # Panel 6: MONTAJE FINAL SOBRE LA IMAGEN ORIGINAL (Líneas rectas continuas)
     ax6 = fig.add_subplot(gs[1, 2])
     ax6.imshow(img_rgb)
-    estilizar_panel(ax6, "6. Montaje Final: BoundingBoxes, Cuadrado y Centroides")
+    estilizar_panel(ax6, "6. Montaje Final: BoundingBoxes, Cuadrados y Centroides")
 
-    # BoundingBox Casa: LÍNEA RECTA SÓLIDA VERDE
-    cajaCasa = propCasa.BoundingBox
-    rect_casa = patches.Rectangle(
-        (cajaCasa[0], cajaCasa[1]), cajaCasa[2], cajaCasa[3],
-        linewidth=1.8, edgecolor='#00ff66', facecolor='none', linestyle='-', label='BoundingBox Casa'
-    )
-    ax6.add_patch(rect_casa)
+    colores = ['#00ff66', '#00d4ff', '#ff9900', '#ff00ff', '#00ffcc', '#ffff00']
 
-    # BoundingBox Auto: LÍNEA RECTA SÓLIDA AZUL/CYAN
-    cajaAuto = propAuto.BoundingBox
-    rect_auto = patches.Rectangle(
-        (cajaAuto[0], cajaAuto[1]), cajaAuto[2], cajaAuto[3],
-        linewidth=1.8, edgecolor='#00d4ff', facecolor='none', linestyle='-', label='BoundingBox Auto'
-    )
-    ax6.add_patch(rect_auto)
+    for i, obj in enumerate(objetos):
+        color_caja = colores[i % len(colores)]
+        caja = obj.BoundingBox
+        cuadro = obj.CuadradoEnvolvente
 
-    # Cuadrado Envolvente: LÍNEA RECTA SÓLIDA AMARILLA (lado = max)
-    cuad_auto = patches.Rectangle(
-        (cuadradoAuto[0], cuadradoAuto[1]), cuadradoAuto[2], cuadradoAuto[3],
-        linewidth=1.8, edgecolor='#ffd700', facecolor='none', linestyle='-', label=f'Cuadrado ({int(lado)}x{int(lado)} px)'
-    )
-    ax6.add_patch(cuad_auto)
+        # BoundingBox rectangular
+        rect = patches.Rectangle(
+            (caja[0], caja[1]), caja[2], caja[3],
+            linewidth=1.8, edgecolor=color_caja, facecolor='none',
+            linestyle='-', label=f'Box {obj.Nombre}'
+        )
+        ax6.add_patch(rect)
 
-    # Centroides con borde de contraste
-    ax6.plot(
-        propCasa.Centroid[0], propCasa.Centroid[1],
-        marker='o', color='#00ff66', markeredgecolor='black', markeredgewidth=1.2,
-        markersize=7, label='Centroide Casa'
-    )
-    ax6.plot(
-        propAuto.Centroid[0], propAuto.Centroid[1],
-        marker='o', color='#ff3333', markeredgecolor='white', markeredgewidth=1.2,
-        markersize=7, label='Centroide Auto'
-    )
+        # Cuadrado envolvente simétrico (lado = max) en amarillo
+        cuad = patches.Rectangle(
+            (cuadro[0], cuadro[1]), cuadro[2], cuadro[3],
+            linewidth=1.8, edgecolor='#ffd700', facecolor='none',
+            linestyle='-', label=f'Cuadrado ({int(obj.LadoCuadrado)}x{int(obj.LadoCuadrado)} px)' if i == 0 else ""
+        )
+        ax6.add_patch(cuad)
 
-    # Etiqueta Casa: Arriba del tejado
-    y_texto_casa = max(16, cajaCasa[1] - 8)
-    ax6.text(
-        cajaCasa[0], y_texto_casa,
-        f"Casa: A={propCasa.Area:.0f} px² | P={propCasa.Perimeter:.1f} px",
-        color='#00ff66', fontsize=7, weight='bold',
-        bbox=dict(facecolor='#121212', alpha=0.65, edgecolor='#00ff66', boxstyle='round,pad=0.15')
-    )
+        # Centroide analítico continuo
+        ax6.plot(
+            obj.Centroid[0], obj.Centroid[1],
+            marker='o', color=color_caja, markeredgecolor='white', markeredgewidth=1.2,
+            markersize=6, label=f'Centroide {obj.Nombre}' if i < 3 else ""
+        )
 
-    # Etiqueta Auto: Debajo del vehículo
-    y_texto_auto = min(alto - 10, cajaAuto[1] + cajaAuto[3] + 16)
-    ax6.text(
-        cajaAuto[0], y_texto_auto,
-        f"Auto: A={propAuto.Area:.0f} px² | P={propAuto.Perimeter:.1f} px",
-        color='#ffd700', fontsize=7, weight='bold',
-        bbox=dict(facecolor='#121212', alpha=0.65, edgecolor='#ffd700', boxstyle='round,pad=0.15')
-    )
+        # Etiqueta de texto compacta
+        y_txt = max(16, caja[1] - 6) if (i % 2 == 0) else min(alto - 10, caja[1] + caja[3] + 16)
+        ax6.text(
+            caja[0], y_txt,
+            f"{obj.Nombre}: A={obj.Area:.0f} | P={obj.Perimeter:.1f}",
+            color=color_caja, fontsize=7, weight='bold',
+            bbox=dict(facecolor='#121212', alpha=0.65, edgecolor=color_caja, boxstyle='round,pad=0.15')
+        )
 
-    # Leyenda situada fuera del panel para dejar el lienzo 100% visible
     ax6.legend(
         loc='upper center', bbox_to_anchor=(0.5, -0.06), ncol=3,
         facecolor='#181818', edgecolor='#383838', labelcolor='white',
         fontsize=6.8, framealpha=0.9, handletextpad=0.4, columnspacing=0.8
     )
 
-    # Ajuste manual de márgenes (evita cualquier UserWarning en la terminal)
     fig.subplots_adjust(left=0.03, right=0.97, top=0.92, bottom=0.09, wspace=0.15, hspace=0.25)
     plt.show()
 
 
 # ==============================================================================
-# 4. EJECUCIÓN PRINCIPAL
+# 5. EJECUCIÓN PRINCIPAL
 # ==============================================================================
 def main():
-    ruta = seleccionar_archivo_imagen()
+    ruta, modo = solicitar_modo_y_archivo()
     if not ruta or not os.path.exists(ruta):
         print("Operación cancelada: No se seleccionó ninguna imagen.")
         return
 
+    semillas = None
+    if modo == "clic":
+        semillas = capturar_clics_usuario(ruta)
+        # Si el usuario no hizo clics y cerró la ventana, se cambia a modo otsu automáticamente
+        if not semillas or len(semillas) == 0:
+            modo = "otsu"
+
     try:
-        datos = procesar_imagen_completa(ruta)
+        datos = procesar_imagen_completa(ruta, modo=modo, puntos_semilla=semillas)
         imprimir_reporte_matlab(datos)
         mostrar_interfaz_grafica(datos)
     except Exception as e:
-        print(f"Error durante el procesamiento: {e}")
+        messagebox.showerror("Error", f"Ocurrió un error al procesar:\n{e}")
 
 
 if __name__ == "__main__":
